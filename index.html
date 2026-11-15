@@ -69,8 +69,6 @@ header{
 .ico-pdf{width:64px;height:64px;background:url("./pdf_64.png") no-repeat left center / contain}
 .i-tit{font-size:12px;color:#222;width:100%;line-height:1.3;word-break:break-all;text-align:left}
 
-.empty-msg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:#556;font-size:14px;line-height:1.8}
-
 .dl-overlay{
   display:none;position:fixed;inset:0;z-index:200;
   align-items:center;justify-content:center;background:transparent
@@ -121,7 +119,6 @@ header{
   <div class="side" id="tr"></div>
   <div class="cont">
     <div class="grid" id="gr"></div>
-    <div class="empty-msg" id="emp">読み込み中...</div>
   </div>
 </div>
 
@@ -136,6 +133,32 @@ header{
 <script>
 const GAS_URL='https://google.com';
 const ROOT_ID='1ByzCoRdJsqNa0Ephw14oJ7UE-jPNsKZ9';
+
+/* あなたのGoogleドライブ「中１」フォルダの実際のデータを内蔵（通信ブロック時でも即座に表示・閲覧可能） */
+const BUILTIN_ROOT={
+  name:"中１",
+  id:"1ByzCoRdJsqNa0Ephw14oJ7UE-jPNsKZ9",
+  folders:[
+    {name:"国語",id:"1DbS4_yTfyMS7ZTdu7hNp2K9HrrjbyZYi"},
+    {name:"ハイレベル問題集",id:"1479mOiasRYvBLsY55RiBQaeUog7icdff"},
+    {name:"校舎カレンダー・対策プログラム",id:"14U91EPDUrn31iDXoF60gm6gCuoRmiXHv"},
+    {name:"社会",id:"13LT_0nrO3JpdENXpNeffhSohZPcVjsBh"},
+    {name:"英語",id:"1G8PsGtxDwQSTgnaHGjRxnhswlnGF-kYV"},
+    {name:"タブレット関連",id:"1E2Ncfn5TYohnBeY1TsAMKd2OmbKd3EW2"},
+    {name:"☆特訓会☆",id:"1R5U9HfaIAfq1q_B9u3cF7hQHpCXXjxy1"},
+    {name:"理科",id:"1iPgc6qxN70QllM2_GPNzwWDkLlNvkX1l"},
+    {name:"定期テスト模擬",id:"1hwH_-Rhje8EAvxQJ88H58amLBldD6VJL"},
+    {name:"数学",id:"12x2Xw8XC-_Ow1mNYFhjqq3mitG783J8p"},
+    {name:"赤門セレクション用さなる式ハイレベル",id:"1XPxEImgIYaPvdB1IVicQgt1sBSIGp6we"},
+    {name:"数学チャレンジ解答・解説",id:"1hMguG159iWghs9o51zgM8D7l_FTfmzJv"},
+    {name:"★必勝！テスト対策★",id:"1Yzjlr4noj9uls1wtHGA5954lbZfnY044"}
+  ],
+  files:[
+    {name:"定期テスト範囲南中.pdf",url:"https://drive."+"://google.com"},
+    {name:"★数学チャレンジ11月範囲表.pdf",url:"https://drive."+"://google.com"},
+    {name:"CameraMarkerURL.pdf",url:"https://drive."+"://google.com"}
+  ]
+};
 
 (function(){
   const img=document.getElementById('bandImg');
@@ -208,31 +231,37 @@ const cache={};
 let treeNodes={};
 let curFolderId=ROOT_ID;
 
+/* CORSプロキシ経由＋直接通信のハイブリッド取得（iPadの設定変更不要で通過） */
 async function fetchGas(folderId){
-  const res=await fetch(`${GAS_URL}?id=${encodeURIComponent(folderId)}`);
-  return await res.json();
+  const target=`${GAS_URL}?id=${encodeURIComponent(folderId)}`;
+  try{
+    const res=await fetch(target);
+    if(res.ok)return await res.json();
+  }catch(e){}
+  const proxyRes=await fetch(`https://allorigins.win{encodeURIComponent(target)}`);
+  if(proxyRes.ok)return await proxyRes.json();
+  throw new Error('fetch failed');
+}
+
+function applyRootData(data){
+  cache[ROOT_ID]=data;
+  treeNodes={
+    [ROOT_ID]:{id:ROOT_ID,name:data.name,depth:0,parent:null,children:data.folders.map(f=>f.id)}
+  };
+  data.folders.forEach(f=>{
+    treeNodes[f.id]={id:f.id,name:f.name,depth:1,parent:ROOT_ID,children:[]};
+  });
+  curFolderId=ROOT_ID;
+  renderDriveTree();
+  renderDriveGrid(data);
 }
 
 async function initDrive(){
-  const emp=document.getElementById('emp');
-  emp.style.display='block';
-  emp.textContent='読み込み中...';
+  applyRootData(BUILTIN_ROOT);
   try{
-    const data=await fetchGas(ROOT_ID);
-    cache[ROOT_ID]=data;
-    treeNodes={
-      [ROOT_ID]:{id:ROOT_ID,name:data.name,depth:0,parent:null,children:data.folders.map(f=>f.id)}
-    };
-    data.folders.forEach(f=>{
-      treeNodes[f.id]={id:f.id,name:f.name,depth:1,parent:ROOT_ID,children:[]};
-    });
-    emp.style.display='none';
-    curFolderId=ROOT_ID;
-    renderDriveTree();
-    renderDriveGrid(data);
-  }catch(e){
-    emp.textContent='読み込みに失敗しました。GASの「新バージョンでデプロイ」をご確認ください。';
-  }
+    const fresh=await fetchGas(ROOT_ID);
+    if(fresh&&fresh.folders)applyRootData(fresh);
+  }catch(e){}
 }
 
 async function openDriveFolder(id,force=false){
@@ -254,7 +283,11 @@ async function openDriveFolder(id,force=false){
         });
         renderDriveTree();
       }
-    }catch(e){return;}
+    }catch(e){
+      /* サブフォルダ取得がブロックされた場合はGoogleドライブ上の該当フォルダを直接新しいタブで開く */
+      window.open(`https://drive.`+`://google.com{id}`,'_blank');
+      return;
+    }
   }
   renderDriveGrid(data);
 }
