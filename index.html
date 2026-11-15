@@ -208,15 +208,9 @@ const cache={};
 let treeNodes={};
 let curFolderId=ROOT_ID;
 
-function fetchGas(folderId){
-  return new Promise((res,rej)=>{
-    const cb='cb_'+Date.now()+'_'+Math.floor(Math.random()*1000);
-    const sc=document.createElement('script');
-    window[cb]=data=>{delete window[cb];sc.remove();res(data);};
-    sc.onerror=()=>{delete window[cb];sc.remove();rej();};
-    sc.src=`${GAS_URL}?id=${encodeURIComponent(folderId)}&callback=${cb}`;
-    document.body.appendChild(sc);
-  });
+async function fetchGas(folderId){
+  const res=await fetch(`${GAS_URL}?id=${encodeURIComponent(folderId)}`);
+  return await res.json();
 }
 
 async function initDrive(){
