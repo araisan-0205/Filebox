@@ -206,30 +206,42 @@ function closeTab(){
 }
 
 /* Googleドライブ（GAS）から「中１」フォルダを自動読み込み */
-async function loadDriveFolder(keepPath=false){
+function loadDriveFolder(keepPath=false){
   const emp=document.getElementById('emp');
   if(!rt){emp.style.display='block';emp.innerHTML='「中１」フォルダを読み込み中...';}
-  try{
-    const res=await fetch(GAS_URL);
-    const data=await res.json();
-    if(!data||!data.c)throw new Error('invalid data');
 
+  const cbName='gasCb_'+Date.now();
+  const script=document.createElement('script');
+
+  window[cbName]=function(data){
+    delete window[cbName];
+    script.remove();
+    if(!data||!data.c){
+      if(!rt){emp.style.display='block';emp.innerHTML='データの形式が正しくありません。';}
+      return;
+    }
     rt=data;
     const tops=Object.keys(rt.c);
     if(!keepPath||cp.length===0){
-      cp=tops.length?[tops[0]]:[];
+      cp=tops.length?[tops]:[];
     }
     emp.style.display='none';
     buildTree();
     renderGrid();
-  }catch(e){
+  };
+
+  script.onerror=function(){
+    delete window[cbName];
+    script.remove();
     if(!rt){
       emp.style.display='block';
-      emp.innerHTML='読み込みに失敗しました。<br>「更新」ボタンを押すか、Googleドライブの共有設定をご確認ください。';
+      emp.innerHTML='読み込みに失敗しました。<br>GASのデプロイ設定（アクセスできるユーザー：全員）をご確認ください。';
     }
-  }
-}
+  };
 
+  script.src=GAS_URL+'?callback='+cbName;
+  document.body.appendChild(script);
+}
 /* ローカルフォルダ選択にも対応 */
 document.getElementById('fi').onchange=e=>{
   const fs=Array.from(e.target.files).filter(f=>!f.name.startsWith('.'));
