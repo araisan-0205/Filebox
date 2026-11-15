@@ -101,7 +101,7 @@ header{
   <div class="hl">
     <input type="file" id="fi" webkitdirectory directory multiple hidden>
     <button class="btn-r" onclick="document.getElementById('fi').click()">まとめて<br>ダウンロード</button>
-    <button class="btn-r" onclick="loadDriveFolder()">まとめて<br>クリア</button>
+    <button class="btn-r" onclick="initDrive()">まとめて<br>クリア</button>
     <div class="s-info" id="si">校舎:長久手本部校<br>中１</div>
   </div>
   <div class="hr">
@@ -121,7 +121,7 @@ header{
   <div class="side" id="tr"></div>
   <div class="cont">
     <div class="grid" id="gr"></div>
-    <div class="empty-msg" id="emp">Googleドライブから読み込み中...</div>
+    <div class="empty-msg" id="emp">読み込み中...</div>
   </div>
 </div>
 
@@ -135,6 +135,7 @@ header{
 
 <script>
 const GAS_URL='https://google.com';
+const ROOT_ID='1ByzCoRdJsqNa0Ephw14oJ7UE-jPNsKZ9';
 
 (function(){
   const img=document.getElementById('bandImg');
@@ -168,7 +169,7 @@ function doUpdate(){
   });
   dlTimer=setTimeout(()=>{
     hideDl();
-    loadDriveFolder(true);
+    if(curFolderId)openDriveFolder(curFolderId,true);
   },200);
 }
 function hideDl(){
@@ -198,126 +199,114 @@ function sanaruSort(a,b){
   return a.localeCompare(b,'ja');
 }
 
-let rt=null,cp=[];
-
 function closeTab(){
   window.open('about:blank','_self').close();
   window.close();
 }
 
-/* Googleドライブ（GAS）から「中１」フォルダを自動読み込み */
-function loadDriveFolder(keepPath=false){
+const cache={};
+let treeNodes={};
+let curFolderId=ROOT_ID;
+
+function fetchGas(folderId){
+  return new Promise((res,rej)=>{
+    const cb='cb_'+Date.now()+'_'+Math.floor(Math.random()*1000);
+    const sc=document.createElement('script');
+    window[cb]=data=>{delete window[cb];sc.remove();res(data);};
+    sc.onerror=()=>{delete window[cb];sc.remove();rej();};
+    sc.src=`${GAS_URL}?id=${encodeURIComponent(folderId)}&callback=${cb}`;
+    document.body.appendChild(sc);
+  });
+}
+
+async function initDrive(){
   const emp=document.getElementById('emp');
-  if(!rt){emp.style.display='block';emp.innerHTML='「中１」フォルダを読み込み中...';}
-
-  const cbName='gasCb_'+Date.now();
-  const script=document.createElement('script');
-
-  window[cbName]=function(data){
-    delete window[cbName];
-    script.remove();
-    if(!data||!data.c){
-      if(!rt){emp.style.display='block';emp.innerHTML='データの形式が正しくありません。';}
-      return;
-    }
-    rt=data;
-    const tops=Object.keys(rt.c);
-    if(!keepPath||cp.length===0){
-      cp=tops.length?[tops]:[];
-    }
-    emp.style.display='none';
-    buildTree();
-    renderGrid();
-  };
-
-  script.onerror=function(){
-    delete window[cbName];
-    script.remove();
-    if(!rt){
-      emp.style.display='block';
-      emp.innerHTML='読み込みに失敗しました。<br>GASのデプロイ設定（アクセスできるユーザー：全員）をご確認ください。';
-    }
-  };
-
-  script.src=GAS_URL+'?callback='+cbName;
-  document.body.appendChild(script);
-}
-/* ローカルフォルダ選択にも対応 */
-document.getElementById('fi').onchange=e=>{
-  const fs=Array.from(e.target.files).filter(f=>!f.name.startsWith('.'));
-  if(!fs.length)return;
-  rt={c:{},f:[]};
-  fs.forEach(f=>{
-    const ps=f.webkitRelativePath.split('/');let n=rt;
-    for(let i=0;i<ps.length-1;i++){if(!n.c[ps[i]])n.c[ps[i]]={c:{},f:[]};n=n.c[ps[i]];}
-    n.f.push({name:f.name,file:f});
-  });
-  const ts=Object.keys(rt.c);cp=ts.length?[ts[0]]:[];
-  document.getElementById('emp').style.display='none';
-  buildTree();
-  renderGrid();
-};
-
-function buildTree(){
-  if(!rt)return;
-  const tr=document.getElementById('tr');
-  const trFrag=document.createDocumentFragment();
-  function wk(n,p,d){
-    if(d>3)return;
-    Object.keys(n.c).sort(sanaruSort).forEach(k=>{
-      const ch=n.c[k];
-      const nx=[...p,k];
-      const r=document.createElement('div');
-      r.className='t-row';
-      r.dataset.path=JSON.stringify(nx);
-      r.style.paddingLeft=(14+d*24)+'px';
-      r.innerHTML=`<div class="t-ico"></div><div class="t-lbl">${k}</div>`;
-      r.onclick=()=>{cp=nx;triggerFlicker();updateTreeActive();renderGrid();};
-      trFrag.appendChild(r);
-      wk(ch,nx,d+1);
+  emp.style.display='block';
+  emp.textContent='読み込み中...';
+  try{
+    const data=await fetchGas(ROOT_ID);
+    cache[ROOT_ID]=data;
+    treeNodes={
+      [ROOT_ID]:{id:ROOT_ID,name:data.name,depth:0,parent:null,children:data.folders.map(f=>f.id)}
+    };
+    data.folders.forEach(f=>{
+      treeNodes[f.id]={id:f.id,name:f.name,depth:1,parent:ROOT_ID,children:[]};
     });
+    emp.style.display='none';
+    curFolderId=ROOT_ID;
+    renderDriveTree();
+    renderDriveGrid(data);
+  }catch(e){
+    emp.textContent='読み込みに失敗しました。GASの「新バージョンでデプロイ」をご確認ください。';
   }
-  wk(rt,[],0);
-  tr.replaceChildren(trFrag);
-  updateTreeActive();
 }
 
-function updateTreeActive(){
-  const curStr=JSON.stringify(cp);
-  document.querySelectorAll('#tr .t-row').forEach(r=>{
-    r.classList.toggle('act',r.dataset.path===curStr);
-  });
+async function openDriveFolder(id,force=false){
+  curFolderId=id;
+  triggerFlicker();
+  renderDriveTree();
+  let data=cache[id];
+  if(!data||force){
+    try{
+      data=await fetchGas(id);
+      cache[id]=data;
+      const parentNode=treeNodes[id];
+      if(parentNode&&parentNode.depth<2){
+        parentNode.children=data.folders.map(f=>f.id);
+        data.folders.forEach(f=>{
+          if(!treeNodes[f.id]){
+            treeNodes[f.id]={id:f.id,name:f.name,depth:parentNode.depth+1,parent:id,children:[]};
+          }
+        });
+        renderDriveTree();
+      }
+    }catch(e){return;}
+  }
+  renderDriveGrid(data);
 }
 
-function renderGrid(){
-  if(!rt)return;
-  let cn=rt;cp.forEach(p=>{if(cn)cn=cn.c[p];});if(!cn)return;
+function renderDriveTree(){
+  const tr=document.getElementById('tr');
+  const frag=document.createDocumentFragment();
+  function walk(id){
+    const node=treeNodes[id];
+    if(!node)return;
+    const r=document.createElement('div');
+    r.className='t-row'+(id===curFolderId?' act':'');
+    r.style.paddingLeft=(14+node.depth*24)+'px';
+    r.innerHTML=`<div class="t-ico"></div><div class="t-lbl">${node.name}</div>`;
+    r.onclick=()=>openDriveFolder(id);
+    frag.appendChild(r);
+    const sortedKids=[...node.children].sort((a,b)=>sanaruSort(treeNodes[a].name,treeNodes[b].name));
+    sortedKids.forEach(kidId=>walk(kidId));
+  }
+  walk(ROOT_ID);
+  tr.replaceChildren(frag);
+}
+
+function renderDriveGrid(data){
   const gr=document.getElementById('gr');
-  const grFrag=document.createDocumentFragment();
-
+  const frag=document.createDocumentFragment();
   const items=[
-    ...Object.keys(cn.c).map(k=>({type:'dir',name:k})),
-    ...cn.f.map(f=>({type:'file',name:f.name,fileObj:f}))
+    ...data.folders.map(f=>({type:'dir',name:f.name,id:f.id})),
+    ...data.files.map(f=>({type:'file',name:f.name,url:f.url}))
   ].sort((a,b)=>sanaruSort(a.name,b.name));
 
   items.forEach(it=>{
     const el=document.createElement('div');el.className='g-item';
     if(it.type==='dir'){
       el.innerHTML=`<div class="i-wrap ico-dir"></div><div class="i-tit">${it.name}</div>`;
-      el.onclick=()=>{cp=[...cp,it.name];triggerFlicker();updateTreeActive();renderGrid();};
+      el.onclick=()=>openDriveFolder(it.id);
     }else{
       el.innerHTML=`<div class="i-wrap ico-pdf"></div><div class="i-tit">${it.name}</div>`;
-      el.onclick=()=>{
-        const targetUrl=it.fileObj.url||URL.createObjectURL(it.fileObj.file);
-        window.open(targetUrl,'_blank');
-      };
+      el.onclick=()=>window.open(it.url,'_blank');
     }
-    grFrag.appendChild(el);
+    frag.appendChild(el);
   });
-  gr.replaceChildren(grFrag);
+  gr.replaceChildren(frag);
 }
 
-loadDriveFolder();
+initDrive();
 </script>
 </body>
 </html>
