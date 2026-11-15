@@ -101,7 +101,7 @@ header{
   <div class="hl">
     <input type="file" id="fi" webkitdirectory directory multiple hidden>
     <button class="btn-r" onclick="document.getElementById('fi').click()">まとめて<br>ダウンロード</button>
-    <button class="btn-r" onclick="clr()">まとめて<br>クリア</button>
+    <button class="btn-r" onclick="loadDriveFolder()">まとめて<br>クリア</button>
     <div class="s-info" id="si">校舎:長久手本部校<br>中１</div>
   </div>
   <div class="hr">
@@ -121,7 +121,7 @@ header{
   <div class="side" id="tr"></div>
   <div class="cont">
     <div class="grid" id="gr"></div>
-    <div class="empty-msg" id="emp">左上の<strong>「まとめてダウンロード」</strong>を押して<br>iPad内のフォルダを選択してください</div>
+    <div class="empty-msg" id="emp">Googleドライブから読み込み中...</div>
   </div>
 </div>
 
@@ -134,6 +134,8 @@ header{
 </div>
 
 <script>
+const GAS_URL='https://google.com';
+
 (function(){
   const img=document.getElementById('bandImg');
   function syncBand(){
@@ -149,43 +151,6 @@ header{
   if(img.complete&&img.naturalWidth)syncBand();
   else img.onload=syncBand;
 })();
-
-/* IndexedDBで一度選んだフォルダを自動保存・次回起動時に自動復元 */
-function openDB(){
-  return new Promise((res,rej)=>{
-    const req=indexedDB.open('FileBoxDB',1);
-    req.onupgradeneeded=e=>e.target.result.createObjectStore('store');
-    req.onsuccess=e=>res(e.target.result);
-    req.onerror=e=>rej(e);
-  });
-}
-
-async function saveToDB(files){
-  try{
-    const db=await openDB();
-    const tx=db.transaction('store','readwrite');
-    const items=files.map(f=>({path:f.webkitRelativePath,blob:f}));
-    tx.objectStore('store').put(items,'folderData');
-  }catch(e){}
-}
-
-async function loadFromDB(){
-  try{
-    const db=await openDB();
-    const tx=db.transaction('store','readonly');
-    const req=tx.objectStore('store').get('folderData');
-    req.onsuccess=()=>{
-      if(req.result&&req.result.length){
-        const restored=req.result.map(it=>{
-          const f=it.blob;
-          Object.defineProperty(f,'savedPath',{value:it.path});
-          return f;
-        });
-        setupFolder(restored);
-      }
-    };
-  }catch(e){}
-}
 
 let dlTimer=null;
 function doUpdate(){
@@ -203,7 +168,7 @@ function doUpdate(){
   });
   dlTimer=setTimeout(()=>{
     hideDl();
-    renderGrid();
+    loadDriveFolder(true);
   },200);
 }
 function hideDl(){
@@ -235,42 +200,50 @@ function sanaruSort(a,b){
 
 let rt=null,cp=[];
 
-async function clr(){
-  rt=null;cp=[];
-  document.getElementById('fi').value='';
-  document.getElementById('tr').innerHTML='';
-  document.getElementById('gr').innerHTML='';
-  document.getElementById('emp').style.display='block';
-  try{
-    const db=await openDB();
-    db.transaction('store','readwrite').objectStore('store').delete('folderData');
-  }catch(e){}
-}
-
 function closeTab(){
   window.open('about:blank','_self').close();
   window.close();
 }
 
-function setupFolder(fs){
-  rt={c:{},f:[]};
-  fs.forEach(f=>{
-    const pStr=f.savedPath||f.webkitRelativePath;
-    const ps=pStr.split('/');let n=rt;
-    for(let i=0;i<ps.length-1;i++){if(!n.c[ps[i]])n.c[ps[i]]={c:{},f:[]};n=n.c[ps[i]];}
-    n.f.push(f);
-  });
-  const ts=Object.keys(rt.c);cp=ts.length?[ts]:[];
-  document.getElementById('emp').style.display='none';
-  buildTree();
-  renderGrid();
+/* Googleドライブ（GAS）から「中１」フォルダを自動読み込み */
+async function loadDriveFolder(keepPath=false){
+  const emp=document.getElementById('emp');
+  if(!rt){emp.style.display='block';emp.innerHTML='「中１」フォルダを読み込み中...';}
+  try{
+    const res=await fetch(GAS_URL);
+    const data=await res.json();
+    if(!data||!data.c)throw new Error('invalid data');
+
+    rt=data;
+    const tops=Object.keys(rt.c);
+    if(!keepPath||cp.length===0){
+      cp=tops.length?[tops[0]]:[];
+    }
+    emp.style.display='none';
+    buildTree();
+    renderGrid();
+  }catch(e){
+    if(!rt){
+      emp.style.display='block';
+      emp.innerHTML='読み込みに失敗しました。<br>「更新」ボタンを押すか、Googleドライブの共有設定をご確認ください。';
+    }
+  }
 }
 
+/* ローカルフォルダ選択にも対応 */
 document.getElementById('fi').onchange=e=>{
   const fs=Array.from(e.target.files).filter(f=>!f.name.startsWith('.'));
   if(!fs.length)return;
-  setupFolder(fs);
-  saveToDB(fs);
+  rt={c:{},f:[]};
+  fs.forEach(f=>{
+    const ps=f.webkitRelativePath.split('/');let n=rt;
+    for(let i=0;i<ps.length-1;i++){if(!n.c[ps[i]])n.c[ps[i]]={c:{},f:[]};n=n.c[ps[i]];}
+    n.f.push({name:f.name,file:f});
+  });
+  const ts=Object.keys(rt.c);cp=ts.length?[ts[0]]:[];
+  document.getElementById('emp').style.display='none';
+  buildTree();
+  renderGrid();
 };
 
 function buildTree(){
@@ -312,7 +285,7 @@ function renderGrid(){
 
   const items=[
     ...Object.keys(cn.c).map(k=>({type:'dir',name:k})),
-    ...cn.f.map(f=>({type:'file',name:f.name,file:f}))
+    ...cn.f.map(f=>({type:'file',name:f.name,fileObj:f}))
   ].sort((a,b)=>sanaruSort(a.name,b.name));
 
   items.forEach(it=>{
@@ -323,8 +296,8 @@ function renderGrid(){
     }else{
       el.innerHTML=`<div class="i-wrap ico-pdf"></div><div class="i-tit">${it.name}</div>`;
       el.onclick=()=>{
-        const url=URL.createObjectURL(it.file);
-        window.open(url,'_blank');
+        const targetUrl=it.fileObj.url||URL.createObjectURL(it.fileObj.file);
+        window.open(targetUrl,'_blank');
       };
     }
     grFrag.appendChild(el);
@@ -332,8 +305,7 @@ function renderGrid(){
   gr.replaceChildren(grFrag);
 }
 
-/* 起動時に前回のフォルダを自動で開く */
-loadFromDB();
+loadDriveFolder();
 </script>
 </body>
 </html>
