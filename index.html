@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>ファイルボックス</title>
+<title>ファイルBOX</title>
 <link rel="icon" type="image/png" href="./favicon.png">
 <link rel="apple-touch-icon" href="./favicon.png">
 <meta name="apple-mobile-web-app-title" content="ファイルBOX">
@@ -150,6 +150,43 @@ header{
   else img.onload=syncBand;
 })();
 
+/* IndexedDBで一度選んだフォルダを自動保存・次回起動時に自動復元 */
+function openDB(){
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open('FileBoxDB',1);
+    req.onupgradeneeded=e=>e.target.result.createObjectStore('store');
+    req.onsuccess=e=>res(e.target.result);
+    req.onerror=e=>rej(e);
+  });
+}
+
+async function saveToDB(files){
+  try{
+    const db=await openDB();
+    const tx=db.transaction('store','readwrite');
+    const items=files.map(f=>({path:f.webkitRelativePath,blob:f}));
+    tx.objectStore('store').put(items,'folderData');
+  }catch(e){}
+}
+
+async function loadFromDB(){
+  try{
+    const db=await openDB();
+    const tx=db.transaction('store','readonly');
+    const req=tx.objectStore('store').get('folderData');
+    req.onsuccess=()=>{
+      if(req.result&&req.result.length){
+        const restored=req.result.map(it=>{
+          const f=it.blob;
+          Object.defineProperty(f,'savedPath',{value:it.path});
+          return f;
+        });
+        setupFolder(restored);
+      }
+    };
+  }catch(e){}
+}
+
 let dlTimer=null;
 function doUpdate(){
   const ov=document.getElementById('dlOv');
@@ -174,7 +211,6 @@ function hideDl(){
   document.getElementById('dlOv').style.display='none';
 }
 
-/* 仕様：フォルダ移動時に5回に1回（20%）の確率で右側のフォルダ群だけが一瞬消える */
 function triggerFlicker(){
   if(Math.random()<0.2){
     const gr=document.getElementById('gr');
@@ -199,12 +235,16 @@ function sanaruSort(a,b){
 
 let rt=null,cp=[];
 
-function clr(){
+async function clr(){
   rt=null;cp=[];
   document.getElementById('fi').value='';
   document.getElementById('tr').innerHTML='';
   document.getElementById('gr').innerHTML='';
   document.getElementById('emp').style.display='block';
+  try{
+    const db=await openDB();
+    db.transaction('store','readwrite').objectStore('store').delete('folderData');
+  }catch(e){}
 }
 
 function closeTab(){
@@ -212,12 +252,11 @@ function closeTab(){
   window.close();
 }
 
-document.getElementById('fi').onchange=e=>{
-  const fs=Array.from(e.target.files).filter(f=>!f.name.startsWith('.'));
-  if(!fs.length)return;
+function setupFolder(fs){
   rt={c:{},f:[]};
   fs.forEach(f=>{
-    const ps=f.webkitRelativePath.split('/');let n=rt;
+    const pStr=f.savedPath||f.webkitRelativePath;
+    const ps=pStr.split('/');let n=rt;
     for(let i=0;i<ps.length-1;i++){if(!n.c[ps[i]])n.c[ps[i]]={c:{},f:[]};n=n.c[ps[i]];}
     n.f.push(f);
   });
@@ -225,6 +264,13 @@ document.getElementById('fi').onchange=e=>{
   document.getElementById('emp').style.display='none';
   buildTree();
   renderGrid();
+}
+
+document.getElementById('fi').onchange=e=>{
+  const fs=Array.from(e.target.files).filter(f=>!f.name.startsWith('.'));
+  if(!fs.length)return;
+  setupFolder(fs);
+  saveToDB(fs);
 };
 
 function buildTree(){
@@ -285,6 +331,9 @@ function renderGrid(){
   });
   gr.replaceChildren(grFrag);
 }
+
+/* 起動時に前回のフォルダを自動で開く */
+loadFromDB();
 </script>
 </body>
 </html>
